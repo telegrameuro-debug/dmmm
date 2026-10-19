@@ -50,7 +50,9 @@ https://t.me/+P5lnLC47U8w4Zjhh
 #   - ya picture ka direct URL (https://...)
 #   - ya Telegram file_id
 # Railway Variables mein PHOTO naam ka variable set karein to wo is se upar rahega
-PHOTO = os.environ.get("PHOTO") or ("photo.jpg" if os.path.isfile("photo.jpg") else None)
+PHOTO = (os.environ.get("PHOTO") or "").strip().strip('"').strip("'") or (
+    "photo.jpg" if os.path.isfile("photo.jpg") else None
+)
 
 # True = message bhejne ke baad user ko approve bhi kar do
 # False = sirf message bhejo, approve/decline aap khud karein
@@ -69,8 +71,11 @@ async def on_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
         channel=html.escape(chat.title or ""),
     )
 
-    try:
-        if PHOTO:
+    logging.info("Join request aayi: user=%s chat=%s", user.id, chat.id)
+
+    sent = False
+    if PHOTO:
+        try:
             photo = open(PHOTO, "rb") if os.path.isfile(PHOTO) else PHOTO
             if len(text) <= 1024:  # Telegram caption limit
                 await context.bot.send_photo(
@@ -87,15 +92,21 @@ async def on_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode="HTML",
                     link_preview_options=LinkPreviewOptions(is_disabled=True),
                 )
-        else:
+            sent = True
+        except Exception as e:
+            logging.error("PICTURE bhejne mein error (PHOTO value check karein): %s", e)
+
+    if not sent:  # picture na ho ya fail ho jaye to sirf message bhejo
+        try:
             await context.bot.send_message(
                 chat_id=req.user_chat_id,
                 text=text,
                 parse_mode="HTML",
                 link_preview_options=LinkPreviewOptions(is_disabled=True),
             )
-    except Exception as e:
-        logging.warning("DM nahi bheja ja saka: %s", e)
+            sent = True
+        except Exception as e:
+            logging.error("MESSAGE bhejne mein error: %s", e)
 
     if AUTO_APPROVE:
         try:
