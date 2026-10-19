@@ -24,12 +24,6 @@ BOT_TOKEN = os.environ["BOT_TOKEN"]  # Railway Variables mein set karein
 # {name} = user ka naam, {channel} = channel ka naam
 MESSAGE = """Hi {name}! 👋
 
-Aap ne <b>{channel}</b> join karne ki request bheji hai.
-
-Yahan apna data / links likhein:
-https://example.com
-https://t.me/your_public_channel
-
 📊Daily FREE USD/BRL 🇧🇷 OTC Market Session 🚀
 
 🚀10-15 NON - Martingale Insights📊
