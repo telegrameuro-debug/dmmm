@@ -9,7 +9,13 @@ import logging
 import os
 
 from telegram import LinkPreviewOptions, Update
-from telegram.ext import Application, ChatJoinRequestHandler, ContextTypes
+from telegram.ext import (
+    Application,
+    ChatJoinRequestHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]  # Railway Variables mein set karein
 
@@ -43,7 +49,8 @@ https://t.me/+P5lnLC47U8w4Zjhh
 #   - repo mein rakhi file ka naam, jaise "photo.jpg"
 #   - ya picture ka direct URL (https://...)
 #   - ya Telegram file_id
-PHOTO = "photo.jpg"
+# Railway Variables mein PHOTO naam ka variable set karein to wo is se upar rahega
+PHOTO = os.environ.get("PHOTO") or ("photo.jpg" if os.path.isfile("photo.jpg") else None)
 
 # True = message bhejne ke baad user ko approve bhi kar do
 # False = sirf message bhejo, approve/decline aap khud karein
@@ -97,9 +104,20 @@ async def on_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logging.warning("Approve fail: %s", e)
 
 
+async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Bot ko picture bhejein to ye uska file_id bata deta hai."""
+    file_id = update.message.photo[-1].file_id
+    await update.message.reply_text(
+        f"Is picture ka file_id:\n\n<code>{file_id}</code>\n\n"
+        "Isay Railway Variables mein PHOTO ki value ke taur par daal dein.",
+        parse_mode="HTML",
+    )
+
+
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(ChatJoinRequestHandler(on_join_request))
+    app.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.PRIVATE, on_photo))
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
