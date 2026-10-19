@@ -43,7 +43,7 @@ https://t.me/+P5lnLC47U8w4Zjhh
 #   - repo mein rakhi file ka naam, jaise "photo.jpg"
 #   - ya picture ka direct URL (https://...)
 #   - ya Telegram file_id
-PHOTO = None
+PHOTO = "photo.jpg"
 
 # True = message bhejne ke baad user ko approve bhi kar do
 # False = sirf message bhejo, approve/decline aap khud karein
