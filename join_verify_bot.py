@@ -46,7 +46,6 @@ ADMIN_IDS = {
 # {name} = user ka naam, {channel} = channel ka naam
 MESSAGE = """Hi {name}! 👋
 
-
 📊Daily FREE USD/BRL 🇧🇷 OTC Market Session 🚀
 
 🚀10-15 NON - Martingale Insights📊
@@ -62,10 +61,20 @@ https://t.me/+P5lnLC47U8w4Zjhh
 """
 # ========================================
 
-# Jab koi user bot ko /start kare to ye message milta hai ({name} chalta hai)
+# Jab koi user bot ko /start kare (ya JOIN NOW button dabaye) to ye message milta hai
+# {name} = user ka naam. HTML chalta hai.
 WELCOME = """Hi {name}! 👋
 
-Bot start ho gaya hai. Ab aap ko hamari updates milti rahengi."""
+<b>Thank you for joining us.</b>
+
+You are now subscribed. We will share regular trading updates and market insights with you right here.
+
+Stay tuned for the next update. 📈
+
+<i>Trading involves risk. Never trade more than you can afford to lose.</i>"""
+
+# Join request wale message ke neeche wale button ka text
+BUTTON_TEXT = "🚀 JOIN NOW"
 
 # Picture bhejni ho to yahan likhein, warna None rehne dein:
 #   - repo mein rakhi file ka naam, jaise "photo.jpg"
@@ -116,10 +125,14 @@ def get_users():
 
 
 # ----------------------------------------------------------- join requests
-async def _send_photo_msg(context, chat_id, photo, text):
+async def _send_photo_msg(context, chat_id, photo, text, markup=None):
     if len(text) <= 1024:  # Telegram caption limit
         await context.bot.send_photo(
-            chat_id=chat_id, photo=photo, caption=text, parse_mode="HTML"
+            chat_id=chat_id,
+            photo=photo,
+            caption=text,
+            parse_mode="HTML",
+            reply_markup=markup,
         )
     else:  # lamba message: pehle picture, phir message
         await context.bot.send_photo(chat_id=chat_id, photo=photo)
@@ -127,6 +140,7 @@ async def _send_photo_msg(context, chat_id, photo, text):
             chat_id=chat_id,
             text=text,
             parse_mode="HTML",
+            reply_markup=markup,
             link_preview_options=LinkPreviewOptions(is_disabled=True),
         )
     return True
@@ -144,14 +158,19 @@ async def on_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     logging.info("Join request aayi: user=%s chat=%s", user.id, chat.id)
 
+    # JOIN NOW button: bot ko open karke /start chalata hai
+    markup = InlineKeyboardMarkup(
+        [[InlineKeyboardButton(BUTTON_TEXT, url=f"https://t.me/{context.bot.username}?start=join")]]
+    )
+
     sent = False
     for candidate in PHOTO_CANDIDATES:
         try:
             if os.path.isfile(candidate):
                 with open(candidate, "rb") as f:
-                    sent = await _send_photo_msg(context, req.user_chat_id, f, text)
+                    sent = await _send_photo_msg(context, req.user_chat_id, f, text, markup)
             else:
-                sent = await _send_photo_msg(context, req.user_chat_id, candidate, text)
+                sent = await _send_photo_msg(context, req.user_chat_id, candidate, text, markup)
             if sent:
                 break
         except Exception as e:
@@ -163,6 +182,7 @@ async def on_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 chat_id=req.user_chat_id,
                 text=text,
                 parse_mode="HTML",
+                reply_markup=markup,
                 link_preview_options=LinkPreviewOptions(is_disabled=True),
             )
             sent = True
