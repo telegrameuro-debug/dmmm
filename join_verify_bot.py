@@ -17,6 +17,7 @@ import html
 import logging
 import os
 import sqlite3
+import time
 
 from telegram import (
     InlineKeyboardButton,
@@ -46,6 +47,12 @@ ADMIN_IDS = {
 # {name} = user ka naam, {channel} = channel ka naam
 MESSAGE = """Hi {name}! 👋
 
+Aap ne <b>{channel}</b> join karne ki request bheji hai.
+
+Yahan apna data / links likhein:
+https://example.com
+https://t.me/your_public_channel
+
 📊Daily FREE USD/BRL 🇧🇷 OTC Market Session 🚀
 
 🚀10-15 NON - Martingale Insights📊
@@ -61,7 +68,7 @@ https://t.me/+P5lnLC47U8w4Zjhh
 """
 # ========================================
 
-# Jab koi user bot ko /start kare (ya JOIN NOW button dabaye) to ye message milta hai
+# Jab koi user bot ko /start kare (ya Verify button dabaye) to ye message milta hai
 # {name} = user ka naam. HTML chalta hai.
 WELCOME = """Hi {name}! 👋
 
@@ -74,7 +81,7 @@ Stay tuned for the next update. 📈
 <i>Trading involves risk. Never trade more than you can afford to lose.</i>"""
 
 # Join request wale message ke neeche wale button ka text
-BUTTON_TEXT = "🚀 JOIN NOW"
+BUTTON_TEXT = "Verify I Am Not Robot 🤖"
 
 # Picture bhejni ho to yahan likhein, warna None rehne dein:
 #   - repo mein rakhi file ka naam, jaise "photo.jpg"
@@ -89,6 +96,22 @@ PHOTO = bool(PHOTO_CANDIDATES)
 # False = sirf message bhejo, approve/decline aap khud karein
 AUTO_APPROVE = False
 
+# ====== AUTO MESSAGE (har X ghante baad sab subscribers ko) ======
+# Jin logon ne bot start kiya hai un sab ko ye messages bari bari jate hain.
+# Pehli baar 6 ghante baad jayega, phir har 6 ghante baad, aur list ghoom kar dobara shuru.
+# HTML chalta hai: <b>bold</b>, <i>italic</i>, <a href="URL">text</a>
+# {name} yahan nahi chalta.
+AUTO_MESSAGES = [
+    """📊 <b>Market Update</b>
+
+Stay tuned. We will share the next trading insights here shortly.""",
+    """📈 <b>Reminder</b>
+
+Keep notifications on so you do not miss the next update.""",
+]
+AUTO_INTERVAL_HOURS = float(os.environ.get("AUTO_INTERVAL_HOURS", "6"))
+# =================================================================
+
 logging.basicConfig(level=logging.INFO)
 
 # ---------------------------------------------------------------- database
@@ -102,6 +125,9 @@ def _db():
         "CREATE TABLE IF NOT EXISTS users ("
         "user_id INTEGER PRIMARY KEY, first_name TEXT, "
         "added TEXT DEFAULT CURRENT_TIMESTAMP)"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)"
     )
     return conn
 
@@ -122,6 +148,21 @@ def remove_user(user_id: int):
 def get_users():
     with _db() as conn:
         return [r[0] for r in conn.execute("SELECT user_id FROM users")]
+
+
+def get_setting(key: str, default: str = "") -> str:
+    with _db() as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    return row[0] if row else default
+
+
+def set_setting(key: str, value: str):
+    with _db() as conn:
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
 
 
 # ----------------------------------------------------------- join requests
@@ -158,7 +199,7 @@ async def on_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     logging.info("Join request aayi: user=%s chat=%s", user.id, chat.id)
 
-    # JOIN NOW button: bot ko open karke /start chalata hai
+    # Verify button: bot ko open karke /start chalata hai
     markup = InlineKeyboardMarkup(
         [[InlineKeyboardButton(BUTTON_TEXT, url=f"https://t.me/{context.bot.username}?start=join")]]
     )
@@ -295,7 +336,7 @@ async def _send_one(bot, uid, source):
         )
 
 
-async def run_broadcast(bot, admin_chat_id, source):
+async def run_broadcast(bot, admin_chat_id, source):  # admin_chat_id None = auto
     users = get_users()
     ok = blocked = failed = 0
 
@@ -317,9 +358,65 @@ async def run_broadcast(bot, admin_chat_id, source):
             logging.warning("Broadcast fail %s: %s", uid, e)
         await asyncio.sleep(0.05)  # ~20 msg/second, Telegram limit se neeche
 
+    logging.info("Broadcast done: ok=%s blocked=%s failed=%s", ok, blocked, failed)
+    if admin_chat_id is None:
+        return
     await bot.send_message(
         admin_chat_id,
         f"✅ Broadcast khatam\n\nBheje gaye: {ok}\nBlock/band (list se hata diye): {blocked}\nFail: {failed}",
+    )
+
+
+# ------------------------------------------------------------ auto broadcast
+async def auto_loop(app):
+    """Har minute check karta hai; AUTO_INTERVAL_HOURS guzar jayen to sab ko message bhejta hai."""
+    while True:
+        await asyncio.sleep(60)
+        try:
+            if get_setting("auto", "on") != "on" or not AUTO_MESSAGES:
+                continue
+            now = time.time()
+            last = float(get_setting("auto_last", "0"))
+            if last == 0:  # pehli baar: abhi se timer shuru (deploy par foran nahi bhejta)
+                set_setting("auto_last", str(now))
+                continue
+            if now - last < AUTO_INTERVAL_HOURS * 3600:
+                continue
+            idx = int(get_setting("auto_idx", "0"))
+            text = AUTO_MESSAGES[idx % len(AUTO_MESSAGES)]
+            set_setting("auto_idx", str((idx + 1) % len(AUTO_MESSAGES)))
+            set_setting("auto_last", str(now))
+            await run_broadcast(app.bot, None, ("text", text))
+        except Exception as e:
+            logging.error("Auto broadcast error: %s", e)
+
+
+async def post_init(app):
+    app.bot_data["auto_task"] = asyncio.create_task(auto_loop(app))
+
+
+async def on_auto(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/auto  (status) | /auto on | /auto off"""
+    if not is_admin(update.effective_user.id):
+        return
+    arg = (context.args[0].lower() if context.args else "")
+    if arg in ("on", "off"):
+        set_setting("auto", arg)
+        if arg == "on":  # on karte hi timer dobara shuru
+            set_setting("auto_last", str(time.time()))
+    state = get_setting("auto", "on")
+    last = float(get_setting("auto_last", "0"))
+    if state == "on" and last:
+        left = max(0, AUTO_INTERVAL_HOURS * 3600 - (time.time() - last))
+        nxt = f"{int(left // 3600)} ghante {int(left % 3600 // 60)} minute baad"
+    else:
+        nxt = "-"
+    await update.message.reply_text(
+        f"Auto message: {state.upper()}\n"
+        f"Har {AUTO_INTERVAL_HOURS:g} ghante baad\n"
+        f"Agla message: {nxt}\n"
+        f"Subscribers: {len(get_users())}\n\n"
+        "Control: /auto on  |  /auto off"
     )
 
 
@@ -337,7 +434,7 @@ async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def main():
-    app = Application.builder().token(BOT_TOKEN).build()
+    app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
     app.add_handler(ChatJoinRequestHandler(on_join_request))
 
@@ -347,6 +444,7 @@ def main():
     app.add_handler(CommandHandler("start", on_start, filters=filters.ChatType.PRIVATE))
     app.add_handler(CommandHandler("id", on_id, filters=filters.ChatType.PRIVATE))
     app.add_handler(CommandHandler("stats", on_stats, filters=filters.ChatType.PRIVATE))
+    app.add_handler(CommandHandler("auto", on_auto, filters=filters.ChatType.PRIVATE))
     app.add_handler(CommandHandler("broadcast", on_broadcast, filters=filters.ChatType.PRIVATE))
     app.add_handler(CallbackQueryHandler(on_broadcast_confirm, pattern=r"^bc:"))
     app.add_handler(
